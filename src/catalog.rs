@@ -266,7 +266,11 @@ fn load_icon(name: &str, locations: &[PathBuf]) -> Option<Icon> {
         return None;
     }
     for location in locations {
-        if path.extension().is_some() {
+        // Reverse-DNS icon names contain dots without specifying an image format.
+        if matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("svg" | "png")
+        ) {
             if let Some(icon) = load(&location.join(name)) {
                 return Some(icon);
             }
@@ -380,6 +384,25 @@ mod tests {
             fs::set_permissions(&icon_path, fs::Permissions::from_mode(0o000)).unwrap();
             assert!(load_icon(icon_path.to_str().unwrap(), &[]).is_none());
             fs::set_permissions(&icon_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+
+    #[test]
+    fn dotted_icon_names_resolve_exported_images_and_explicit_extensions() {
+        let fixture = Fixture::new();
+        let icons = fixture.0.join("icons/hicolor/64x64/apps");
+        fs::create_dir_all(&icons).unwrap();
+        let bytes = b"\x89PNG\r\n\x1a\nfixture";
+        fs::write(icons.join("com.bitwarden.desktop.png"), bytes).unwrap();
+        let locations = icon_locations(&[fixture.0.join("icons")]);
+        for name in ["com.bitwarden.desktop", "com.bitwarden.desktop.png"] {
+            assert!(
+                matches!(load_icon(name, &locations), Some(Icon::Raster(loaded)) if loaded == bytes)
+            );
+        }
+        fs::write(icons.join("org.example.App.svg"), b"<svg/>").unwrap();
+        for name in ["org.example.App", "org.example.App.svg"] {
+            assert!(matches!(load_icon(name, &locations), Some(Icon::Svg(_))));
         }
     }
 
