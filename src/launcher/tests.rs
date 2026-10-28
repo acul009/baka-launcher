@@ -42,6 +42,8 @@ fn loaded(apps: Vec<catalog::App>) -> (State, Task<Message>) {
 fn render_state(state: &State) -> State {
     State {
         query: state.query.clone(),
+        calculation: state.calculation.clone(),
+        copied: state.copied,
         apps: state.apps.clone(),
         icons: state
             .icons
@@ -510,4 +512,141 @@ fn custom_pins_do_not_override_search_ranking_and_default_unpins_sort_alphabetic
     state.pins.set("code.desktop".into(), true);
     let _ = state.update(Message::Query("browser".into()));
     assert_eq!(state.visible, [2, 0]);
+}
+
+fn clipboard_result(
+    task: Task<Message>,
+    expected: &str,
+    status: Result<(), iced::clipboard::Error>,
+) -> Message {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    executor.block_on(async {
+        let mut actions =
+            runtime::task::into_stream(task).expect("copy must schedule a clipboard write");
+        let mut status = Some(status);
+        let mut writes = 0;
+        while let Some(action) = actions.next().await {
+            match action {
+                Action::Clipboard(runtime::clipboard::Action::Write { content, channel }) => {
+                    assert_eq!(
+                        content,
+                        iced_test::core::clipboard::Content::Text(expected.to_owned())
+                    );
+                    writes += 1;
+                    channel
+                        .send(status.take().expect("exactly one clipboard write"))
+                        .unwrap();
+                }
+                Action::Widget(_) => {}
+                Action::Output(message) => {
+                    assert_eq!(writes, 1);
+                    return message;
+                }
+                _ => panic!("copy must neither launch applications nor exit"),
+            }
+        }
+        panic!("clipboard write did not report its result");
+    })
+}
+
+#[test]
+fn typing_an_expression_shows_the_result_and_enter_copies_instead_of_launching() {
+    let (mut state, boot) = State::new();
+    let rendered = render_state(&state);
+    let mut ui = Simulator::with_size(Settings::default(), (1200.0, 760.0), rendered.view());
+    focus(&mut ui, boot);
+    let _ = ui.typewrite("2 + 3 * 4");
+    for message in ui.drain().collect::<Vec<_>>() {
+        let _ = state.update(message);
+    }
+    assert_eq!(state.calculation.as_deref(), Some("14"));
+    assert!(state.visible.is_empty());
+    let updated = render_state(&state);
+    let mut ui = ui.rebuild(updated.view());
+    assert!(ui.find("CALCULATOR").is_ok());
+    assert!(ui.find("14").is_ok());
+    let _ = ui
+        .snapshot(&Theme::Dark)
+        .unwrap()
+        .matches_image(format!(
+            "target/calculator-preview-{}.png",
+            std::process::id()
+        ))
+        .unwrap();
+    assert!(ui.find("Loading applications…").is_err());
+    // Completing indexing must not replace an already calculated result.
+    let _ = state.update(Message::Loaded(Ok(vec![app("match.desktop", "2 + 3 * 4")])));
+    assert!(state.visible.is_empty());
+    let _ = ui.tap_key(Named::Enter);
+    let message = ui
+        .into_messages()
+        .find(|message| matches!(message, Message::Submit))
+        .unwrap();
+    let task = state.update(message);
+    let result = clipboard_result(task, "14", Ok(()));
+    assert!(runtime::task::into_stream(state.update(result)).is_none());
+    assert!(state.copied && !state.launching);
+    let mut ui = Simulator::with_size(Settings::default(), (1200.0, 760.0), state.view());
+    assert!(ui.find("Copied to clipboard").is_ok());
+    assert!(ui.find("APPLICATIONS").is_err());
+}
+
+#[test]
+fn clicking_the_result_copies_its_text_and_reports_clipboard_errors() {
+    let (mut state, _) = loaded(Vec::new());
+    let _ = state.update(Message::Query("7 % 4".into()));
+    let mut ui = Simulator::with_size(Settings::default(), (420.0, 360.0), state.view());
+    let bounds = ui.find("3").unwrap().bounds();
+    assert!(bounds.x + bounds.width <= 410.0);
+    let _ = ui.click("3").unwrap();
+    let message = ui
+        .into_messages()
+        .find(|message| matches!(message, Message::CopyResult))
+        .unwrap();
+    let task = state.update(message);
+    let result = clipboard_result(task, "3", Err(iced::clipboard::Error::ClipboardUnavailable));
+    let _ = state.update(result);
+    assert!(!state.copied && !state.launching);
+    assert_eq!(state.calculation.as_deref(), Some("3"));
+    let mut ui = Simulator::with_size(Settings::default(), (420.0, 360.0), state.view());
+    assert!(ui.find("Could not copy result to the clipboard").is_ok());
+    let _ = ui.click("3").unwrap();
+    let message = ui
+        .into_messages()
+        .find(|message| matches!(message, Message::CopyResult))
+        .unwrap();
+    let task = state.update(message);
+    let result = clipboard_result(task, "3", Ok(()));
+    let _ = state.update(result);
+    assert!(state.copied && state.error.is_none());
+}
+
+#[test]
+fn evaluation_failure_restores_app_search_and_ignores_old_clipboard_feedback() {
+    let (mut state, _) = loaded(vec![
+        app("helper.desktop", "2 + utility"),
+        app("firefox.desktop", "Firefox"),
+    ]);
+    let _ = state.update(Message::Query("2 + 2".into()));
+    assert_eq!(state.calculation.as_deref(), Some("4"));
+    let _ = state.update(Message::Query("2 +".into()));
+    assert!(state.calculation.is_none());
+    assert_eq!(state.visible, [0]);
+    let mut ui = Simulator::with_size(Settings::default(), (1200.0, 760.0), state.view());
+    assert!(ui.find("2 + utility").is_ok());
+    assert!(ui.find("CALCULATOR").is_err());
+    drop(ui);
+    let _ = state.update(Message::Query("firefox".into()));
+    assert_eq!(state.visible, [1]);
+    let _ = state.update(Message::CopyFinished {
+        result: "4".into(),
+        status: Ok(()),
+    });
+    assert!(!state.copied);
+    assert!(runtime::task::into_stream(state.update(Message::CopyResult)).is_none());
+    let _ = state.update(Message::Query(String::new()));
+    assert!(state.calculation.is_none());
+    assert_eq!(state.visible.len(), 2);
 }

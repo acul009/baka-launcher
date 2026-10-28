@@ -1,10 +1,18 @@
 # Baka Launcher
 
 A small Linux application launcher built with iced master. Running the executable
-opens the launcher with search already focused. Type to filter installed apps,
-press **Enter** to open the first result, or click an app. **Escape** closes the
+opens the launcher with search already focused. Type to calculate or filter
+installed apps. For app results, press **Enter** to open the first match or click
+an app. **Escape** closes the
 window. The launcher closes after the OS accepts an application launch; an error
 keeps the window open so you can search again.
+
+Queries are evaluated with fasteval first: `2 + 3 * 4` displays `14`. Press
+**Enter** or click the calculation result to copy its value to the clipboard.
+The window stays open and confirms the copy; clipboard failures show an error.
+If evaluation fails, the query uses the normal application search instead.
+Arithmetic uses floating-point numbers and supports parentheses, powers (`^`),
+remainder (`%`), and functions such as `sin` and `log`.
 
 **Right-click an application** and select **Pin to Pinned** or **Unpin from
 Pinned**. The change appears after saving and persists between launches. Click

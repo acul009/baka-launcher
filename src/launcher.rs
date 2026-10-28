@@ -16,6 +16,8 @@ const MUTED: Color = Color::from_packed_rgb8(0x989ca6);
 /// The single launcher screen.
 pub struct State {
     query: String,
+    calculation: Option<String>,
+    copied: bool,
     apps: Vec<catalog::App>,
     icons: Vec<Icon>,
     visible: Vec<usize>,
@@ -41,6 +43,15 @@ pub enum Message {
     Query(String),
     /// Activate the first displayed result.
     Submit,
+    /// Copy the displayed calculation result without launching an application.
+    CopyResult,
+    /// The clipboard reports success or failure for the specified result.
+    CopyFinished {
+        /// Result whose clipboard request completed.
+        result: String,
+        /// Clipboard write outcome.
+        status: Result<(), iced::clipboard::Error>,
+    },
     /// Activate one displayed application.
     Launch(usize),
     /// Initial or refreshed application scan completed.
@@ -88,6 +99,8 @@ impl State {
         (
             Self {
                 query: String::new(),
+                calculation: None,
+                copied: false,
                 apps: Vec::new(),
                 icons: Vec::new(),
                 visible: Vec::new(),
@@ -110,6 +123,8 @@ impl State {
             Message::Query(query) => {
                 self.context = None;
                 self.query = query;
+                self.calculation = model::calculator::evaluate(&self.query);
+                self.copied = false;
                 self.error = None;
                 self.visible = self.order();
                 Task::none()
@@ -141,6 +156,9 @@ impl State {
                 Task::none()
             }
             Message::Submit => {
+                if self.calculation.is_some() {
+                    return self.update(Message::CopyResult);
+                }
                 if self.context.is_some() {
                     return self.update(Message::TogglePin);
                 }
@@ -148,6 +166,33 @@ impl State {
                     return Task::none();
                 };
                 self.update(Message::Launch(index))
+            }
+            Message::CopyResult => {
+                let Some(result) = self.calculation.clone() else {
+                    return Task::none();
+                };
+                self.copied = false;
+                self.error = None;
+                Task::batch([
+                    iced::clipboard::write(result.clone()).map(move |status| {
+                        Message::CopyFinished {
+                            result: result.clone(),
+                            status,
+                        }
+                    }),
+                    operation::focus(SEARCH),
+                ])
+            }
+            Message::CopyFinished { result, status } => {
+                if self.calculation.as_ref() == Some(&result) {
+                    match status {
+                        Ok(()) => self.copied = true,
+                        Err(_) => {
+                            self.error = Some("Could not copy result to the clipboard".into())
+                        }
+                    }
+                }
+                Task::none()
             }
             Message::Launch(index) => {
                 if self.launching || !self.visible.contains(&index) {
@@ -259,6 +304,9 @@ impl State {
     }
 
     fn order(&self) -> Vec<usize> {
+        if self.calculation.is_some() {
+            return Vec::new();
+        }
         // The model's exact order is also the grid's order and Enter's target.
         let entries: Vec<_> = self.apps.iter().map(|app| app.entry.clone()).collect();
         let mut ordered = model::search::order(&entries, &self.query);
@@ -389,7 +437,49 @@ impl State {
             };
             let mut body: iced::widget::Column<Element<'_, Message>> =
                 column![].spacing(12).width(Fill);
-            if !self.query.trim().is_empty() {
+            if let Some(result) = &self.calculation {
+                body = body
+                    .push(text("CALCULATOR").size(15).color(MUTED).boxed())
+                    .push(
+                        button(
+                            column![
+                                text(result)
+                                    .size(32)
+                                    .wrapping(text::Wrapping::WordOrGlyph)
+                                    .color(color!(0xeeeeef)),
+                                text(if self.copied {
+                                    "Copied to clipboard"
+                                } else {
+                                    "Enter or click to copy"
+                                })
+                                .size(14)
+                                .color(MUTED),
+                            ]
+                            .spacing(8)
+                            .width(Fill),
+                        )
+                        .on_press(Message::CopyResult)
+                        .padding(18)
+                        .width(Fill)
+                        .style(|_, status| button::Style {
+                            background: Some(
+                                if status == button::Status::Hovered {
+                                    color!(0x29292d)
+                                } else {
+                                    color!(0x202023)
+                                }
+                                .into(),
+                            ),
+                            border: Border {
+                                color: color!(0x38383e),
+                                width: 1.0,
+                                radius: 9.into(),
+                            },
+                            ..Default::default()
+                        })
+                        .boxed(),
+                    );
+            } else if !self.query.trim().is_empty() {
                 body = body
                     .push(text("APPLICATIONS").size(15).color(MUTED).boxed())
                     .push(tiles(self.visible.clone()).boxed());
@@ -432,9 +522,9 @@ impl State {
                     .push(text("APPLICATIONS").size(15).color(MUTED).boxed())
                     .push(tiles(remaining).boxed());
             }
-            if self.loading {
+            if self.loading && self.calculation.is_none() {
                 body = body.push(text("Loading applications…").size(14).color(MUTED).boxed());
-            } else if self.visible.is_empty() {
+            } else if self.visible.is_empty() && self.calculation.is_none() {
                 body = body.push(
                     text(if self.apps.is_empty() {
                         "No applications found"

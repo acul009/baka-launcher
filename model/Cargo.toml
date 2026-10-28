@@ -5,4 +5,5 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+fasteval = "0.2.4"
 thiserror = "2"
