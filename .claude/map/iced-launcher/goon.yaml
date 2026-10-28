@@ -1,0 +1,38 @@
+project: baka-launcher
+description: Focused iced application launcher with no background service
+repo: none
+milestone: none
+default_branch: master
+handoff:
+  dir: .claude/map/iced-launcher
+  prefix: SESSION_HANDOFF
+workspace:
+  - name: baka-launcher
+    path: .
+    role: binary and UI
+  - name: model
+    path: model
+    role: pure desktop entry and search logic
+checklist:
+  quick:
+    - cargo check --workspace
+  verify:
+    - cargo test --workspace
+    - cargo build --release
+  lint:
+    - cargo fmt --all --check
+    - cargo clippy --workspace --all-targets -- -D warnings
+key_files:
+  - AGENTS.md
+  - Cargo.toml
+  - .claude/map/iced-launcher/MAP_PLAN.md
+  - src/main.rs
+  - src/launcher.rs
+  - src/catalog.rs
+  - src/launch.rs
+  - model/src/entry.rs
+  - model/src/search.rs
+workflow:
+  - User authorized all MAP stages and iced master with iced_test.
+  - No remote or GitHub tracking configured; keep planning local.
+  - Never run installed target apps as test fixtures.

@@ -1,0 +1,22 @@
+[package]
+name = "baka-launcher"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+iced = { git = "https://github.com/iced-rs/iced", branch = "master", default-features = false, features = ["wgpu", "tiny-skia", "x11", "wayland", "wayland-dlopen", "tokio", "image", "svg", "fira-sans", "advanced"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+thiserror = "2"
+model = { path = "model" }
+
+[dev-dependencies]
+iced_test = { git = "https://github.com/iced-rs/iced", branch = "master" }
+
+[workspace]
+resolver = "3"
+members = ["model"]
+
+[profile.release]
+strip = true
+lto = "thin"
