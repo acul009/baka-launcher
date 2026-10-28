@@ -213,7 +213,8 @@ fn icon_locations(roots: &[PathBuf]) -> Vec<PathBuf> {
         }
         for theme in themes {
             for size in [
-                "64x64", "128x128", "scalable", "48x48", "256x256", "96x96", "32x32", "symbolic",
+                "64x64", "128x128", "scalable", "48x48", "256x256", "512x512", "96x96", "32x32",
+                "symbolic",
             ] {
                 locations.push(theme.join(size).join("apps"));
             }
@@ -421,5 +422,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(fixture.scan().len(), 1);
+    }
+
+    #[test]
+    fn application_icons_available_only_at_512_pixels_are_loaded() {
+        let fixture = Fixture::new();
+        fixture.entry(
+            "system",
+            "dev.zed.Zed.desktop",
+            "[Desktop Entry]\nType=Application\nName=Zed\nExec=zeditor\nIcon=zed\n",
+        );
+        let icons = fixture.0.join("system/icons/hicolor/512x512/apps");
+        fs::create_dir_all(&icons).unwrap();
+        let bytes = b"\x89PNG\r\n\x1a\nfixture";
+        fs::write(icons.join("zed.png"), bytes).unwrap();
+        let apps = scan_roots(
+            &[fixture.0.join("system")],
+            "C",
+            "COSMIC",
+            &[],
+            &icon_locations(&[fixture.0.join("system/icons")]),
+        );
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].entry.name, "Zed");
+        assert!(matches!(&apps[0].icon, Some(Icon::Raster(loaded)) if loaded == bytes));
     }
 }
