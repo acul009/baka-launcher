@@ -3,15 +3,15 @@
 use iced::keyboard;
 use iced::widget::{
     button, column, container, grid, image, mouse_area, operation, pin, row, scrollable, space,
-    stack, svg, text, text_input, tooltip,
+    stack, svg, text, text_input,
 };
 use iced::{Border, Center, Color, Element, Fill, Point, Subscription, Task, Theme, Widget, color};
 
 use crate::{catalog, launch, pins};
 
 const SEARCH: &str = "search";
-const SURFACE: Color = Color::from_packed_rgb8(0x131313);
-const MUTED: Color = Color::from_packed_rgb8(0x989ca6);
+const SURFACE: Color = Color::from_packed_rgb8(0x101113);
+const MUTED: Color = Color::from_packed_rgb8(0x9da4af);
 
 /// The single launcher screen.
 pub struct State {
@@ -76,6 +76,8 @@ pub enum Message {
     PreferencesSaved(Result<pins::Preferences, String>),
     /// Close the launcher.
     Close,
+    /// Exit when the native window loses keyboard focus, even with a menu open.
+    Unfocused,
 }
 
 impl State {
@@ -216,7 +218,7 @@ impl State {
                     Message::Launched,
                 )
             }
-            Message::Launched(Ok(())) => iced::exit(),
+            Message::Launched(Ok(())) | Message::Unfocused => iced::exit(),
             Message::Close if self.context.is_some() => self.update(Message::Dismiss),
             Message::Close => iced::exit(),
             Message::Launched(Err(error)) => {
@@ -342,104 +344,65 @@ impl State {
             }),
             iced::window::events().filter_map(|(_, event)| match event {
                 iced::window::Event::Opened { .. } => Some(Message::Focus),
-                iced::window::Event::Unfocused => Some(Message::Dismiss),
+                iced::window::Event::Unfocused => Some(Message::Unfocused),
                 _ => None,
             }),
         ])
     }
 
-    /// Builds the dark reference layout with responsive application tiles.
+    /// Builds a focused search bar and a quiet, responsive application grid.
     pub fn view(&self) -> Element<'_, Message> {
         let search = container(
             row![
                 svg(svg::Handle::from_memory(
                     include_bytes!("../assets/search.svg").as_slice()
                 ))
-                .width(25)
-                .height(25),
-                text_input("Search", &self.query)
+                .width(20)
+                .height(20),
+                text_input("Search apps or calculate…", &self.query)
                     .id(SEARCH)
-                    .size(19)
+                    .size(17)
                     .padding(0)
                     .on_input(Message::Query)
                     .on_submit(Message::Submit)
                     .style(|_, _| text_input::Style {
                         background: Color::TRANSPARENT.into(),
                         border: Border::default(),
-                        placeholder: color!(0xe4e4e7),
+                        placeholder: color!(0xa9b1bf),
                         value: color!(0xf0f0f2),
-                        selection: color!(0x485571),
+                        selection: color!(0x45474e),
                     }),
             ]
-            .spacing(13)
+            .spacing(12)
             .align_y(Center),
         )
-        .padding([13, 12])
-        .height(52)
+        .padding([10, 14])
+        .height(50)
         .width(Fill)
         .style(|_| container::Style {
-            background: Some(color!(0x202020).into()),
+            background: Some(color!(0x18191b).into()),
             border: Border {
-                color: color!(0x373737),
-                width: 1.2,
-                radius: 10.into(),
-            },
-            ..Default::default()
-        });
-
-        let rail = container(
-            column![
-                space().height(Fill),
-                rail_button(
-                    include_bytes!("../assets/refresh.svg"),
-                    "Refresh applications",
-                    Some(Message::Reload)
-                ),
-                rail_button(
-                    include_bytes!("../assets/moon.svg"),
-                    "Dark appearance",
-                    None
-                ),
-                rail_button(
-                    include_bytes!("../assets/exit.svg"),
-                    "Close launcher",
-                    Some(Message::Close)
-                ),
-                rail_button(
-                    include_bytes!("../assets/power.svg"),
-                    "Session actions unavailable",
-                    None
-                ),
-            ]
-            .spacing(9)
-            .align_x(Center),
-        )
-        .padding([10, 8])
-        .width(52)
-        .height(Fill)
-        .style(|_| container::Style {
-            background: Some(SURFACE.into()),
-            border: Border {
-                radius: 11.into(),
-                ..Default::default()
+                color: color!(0x45474e),
+                width: 1.0,
+                radius: 9.into(),
             },
             ..Default::default()
         });
 
         let content = iced::widget::responsive(move |size| {
-            let columns = ((size.width - 20.0) / 104.0).floor().clamp(1.0, 8.0) as usize;
+            let columns = ((size.width - 20.0) / 156.0).floor().clamp(1.0, 8.0) as usize;
             let tiles = |indexes: Vec<usize>| {
                 grid(indexes.into_iter().map(|index| self.tile(index)))
                     .columns(columns)
-                    .width((columns as f32 * 104.0).min(size.width - 8.0))
-                    .height(iced::widget::grid::aspect_ratio(104, 118))
-                    .spacing(0)
+                    .width((size.width - 16.0).max(1.0))
+                    .height(iced::Shrink)
+                    .spacing(12)
             };
             let mut body: iced::widget::Column<Element<'_, Message>> =
-                column![].spacing(12).width(Fill);
+                column![].spacing(14).width(Fill);
             if let Some(result) = &self.calculation {
                 body = body
-                    .push(text("CALCULATOR").size(15).color(MUTED).boxed())
+                    .push(text("CALCULATOR").size(12).color(MUTED).boxed())
                     .push(
                         button(
                             column![
@@ -481,7 +444,7 @@ impl State {
                     );
             } else if !self.query.trim().is_empty() {
                 body = body
-                    .push(text("APPLICATIONS").size(15).color(MUTED).boxed())
+                    .push(text("APPLICATIONS").size(12).color(MUTED).boxed())
                     .push(tiles(self.visible.clone()).boxed());
             } else {
                 let (pinned, remaining): (Vec<_>, Vec<_>) = self
@@ -489,37 +452,23 @@ impl State {
                     .iter()
                     .copied()
                     .partition(|&index| self.pins.is_pinned(&self.apps[index].entry));
-                body = body.push(text("PINNED").size(15).color(MUTED).boxed());
-                if pinned.is_empty() {
-                    body = body.push(
-                        container(
-                            text(if self.loading {
-                                ""
-                            } else {
-                                "Right-click an application to pin it"
-                            })
-                            .size(14)
-                            .color(MUTED),
-                        )
-                        .height(110)
-                        .padding([22, 12])
-                        .boxed(),
-                    );
-                } else {
-                    body = body.push(tiles(pinned).boxed());
+                if !pinned.is_empty() {
+                    body = body
+                        .push(text("PINNED").size(12).color(MUTED).boxed())
+                        .push(tiles(pinned).boxed())
+                        .push(
+                            iced::widget::rule::horizontal(1)
+                                .style(|_| iced::widget::rule::Style {
+                                    color: color!(0x272b31),
+                                    radius: 0.into(),
+                                    fill_mode: iced::widget::rule::FillMode::Full,
+                                    snap: true,
+                                })
+                                .boxed(),
+                        );
                 }
                 body = body
-                    .push(
-                        iced::widget::rule::horizontal(1)
-                            .style(|_| iced::widget::rule::Style {
-                                color: color!(0x222222),
-                                radius: 0.into(),
-                                fill_mode: iced::widget::rule::FillMode::Full,
-                                snap: true,
-                            })
-                            .boxed(),
-                    )
-                    .push(text("APPLICATIONS").size(15).color(MUTED).boxed())
+                    .push(text("APPLICATIONS").size(12).color(MUTED).boxed())
                     .push(tiles(remaining).boxed());
             }
             if self.loading && self.calculation.is_none() {
@@ -536,7 +485,7 @@ impl State {
                     .boxed(),
                 );
             }
-            scrollable(body.padding([12, 10])).height(Fill).width(Fill)
+            scrollable(body.padding([10, 4])).height(Fill).width(Fill)
         });
         let panel = container(content)
             .height(Fill)
@@ -554,13 +503,13 @@ impl State {
         if let Some(error) = &self.error {
             body = body.push(text(error).size(14).color(color!(0xefb0ad)).boxed());
         }
-        body = body.push(row![rail, panel].spacing(10).height(Fill).boxed());
+        body = body.push(panel.boxed());
         let base = container(body)
-            .padding(10)
+            .padding(12)
             .height(Fill)
             .width(Fill)
             .style(|_| container::Style {
-                background: Some(color!(0x090909).into()),
+                background: Some(SURFACE.into()),
                 border: Border {
                     radius: 12.into(),
                     ..Default::default()
@@ -632,11 +581,19 @@ impl State {
 
     fn tile(&self, index: usize) -> Element<'_, Message> {
         let app = &self.apps[index];
+        let pinned = self.query.trim().is_empty() && self.pins.is_pinned(&app.entry);
+        let icon_size: u32 = if pinned { 32 } else { 40 };
         let icon: Element<'_, Message> = match &self.icons[index] {
-            Icon::Svg(handle) => svg(handle.clone()).width(44).height(44).boxed(),
-            Icon::Raster(handle) => image(handle.clone()).width(44).height(44).boxed(),
+            Icon::Svg(handle) => svg(handle.clone())
+                .width(icon_size)
+                .height(icon_size)
+                .boxed(),
+            Icon::Raster(handle) => image(handle.clone())
+                .width(icon_size)
+                .height(icon_size)
+                .boxed(),
         };
-        let first = !self.query.trim().is_empty() && self.visible.first() == Some(&index);
+        let first = self.visible.first() == Some(&index);
         mouse_area(
             button(
                 column![
@@ -647,24 +604,37 @@ impl State {
                         .height(36)
                         .wrapping(text::Wrapping::WordOrGlyph)
                         .ellipsis(text::Ellipsis::End)
-                        .color(MUTED)
+                        .color(if first {
+                            color!(0xf0f2f6)
+                        } else {
+                            color!(0xc5cbd4)
+                        })
                         .align_x(Center)
                         .width(Fill)
                 ]
-                .spacing(10)
+                .spacing(8)
                 .align_x(Center),
             )
-            .padding([16, 4])
+            .padding([if pinned { 10 } else { 14 }, 8])
             .width(Fill)
-            .height(118)
+            .height(if pinned { 100 } else { 116 })
             .on_press_maybe((!self.launching).then_some(Message::Launch(index)))
             .style(move |_, status| button::Style {
-                background: (matches!(status, button::Status::Hovered | button::Status::Pressed))
-                    .then_some(color!(0x242426).into()),
+                background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                    Some(color!(0x292a2e).into())
+                } else if first {
+                    Some(color!(0x222327).into())
+                } else {
+                    Some(color!(0x191a1d).into())
+                },
                 border: Border {
                     radius: 8.into(),
-                    width: if first { 1.0 } else { 0.0 },
-                    color: color!(0x34343b),
+                    width: 1.0,
+                    color: if first {
+                        color!(0x62656f)
+                    } else {
+                        color!(0x2d2f35)
+                    },
                 },
                 text_color: MUTED,
                 ..Default::default()
@@ -685,36 +655,6 @@ fn scan() -> Task<Message> {
         },
         Message::Loaded,
     )
-}
-
-fn rail_button(
-    bytes: &'static [u8],
-    label: &'static str,
-    message: Option<Message>,
-) -> Element<'static, Message> {
-    tooltip(
-        button(svg(svg::Handle::from_memory(bytes)).width(23).height(23))
-            .on_press_maybe(message)
-            .padding(6)
-            .style(|_, status| button::Style {
-                background: Some(
-                    if status == button::Status::Hovered {
-                        color!(0x29292b)
-                    } else {
-                        color!(0x1d1d1e)
-                    }
-                    .into(),
-                ),
-                border: Border {
-                    radius: 10.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }),
-        text(label).size(13),
-        tooltip::Position::Right,
-    )
-    .boxed()
 }
 
 /// The fixed dark appearance used by the launcher.

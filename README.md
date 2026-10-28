@@ -3,8 +3,8 @@
 A small Linux application launcher built with iced master. Running the executable
 opens the launcher with search already focused. Type to calculate or filter
 installed apps. For app results, press **Enter** to open the first match or click
-an app. **Escape** closes the
-window. The launcher closes after the OS accepts an application launch; an error
+an app. **Escape** closes the window, and switching to another window also
+closes the launcher. The launcher closes after the OS accepts an application launch; an error
 keeps the window open so you can search again.
 
 Queries are evaluated with fasteval first: `2 + 3 * 4` displays `14`. Press
@@ -22,10 +22,11 @@ This works in both the application grid and search results.
 The window has fixed size limits so tiling compositors such as COSMIC treat it
 as a floating dialog rather than adding it to the tiled layout.
 
-The dark layout follows the supplied reference: search, pinned applications,
-application grid, and a narrow rail. Refresh rescans installed applications;
-the exit control closes the launcher. The moon indicates dark appearance and
-the disabled power icon does not perform a session action.
+The compact dark layout has a focused search bar, smaller pinned tiles, and a
+responsive application grid. Tiles use subtle hover backgrounds and a persistent
+outline on the first result, which is the target of Enter. Labels use a
+proportional font and wrap to two lines. Installed applications are scanned on
+each launch. The floating window is 1000×650 logical pixels.
 
 ## Build and run
 

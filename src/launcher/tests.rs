@@ -257,13 +257,13 @@ fn layout_keeps_search_and_tiles_inside_default_and_minimum_windows() {
         app("one.desktop", "One"),
         app("two.desktop", "Two"),
     ]);
-    for size in [Size::new(1200.0, 760.0), Size::new(420.0, 360.0)] {
+    for size in [Size::new(1000.0, 650.0), Size::new(420.0, 360.0)] {
         let mut ui = Simulator::with_size(Settings::default(), size, state.view());
         let search = ui.find(selector::id(super::SEARCH)).unwrap().bounds();
         assert!(search.x >= 10.0 && search.x + search.width <= size.width - 10.0);
         for label in ["Chrome", "One", "Two"] {
             let bounds = ui.find(label).unwrap().bounds();
-            assert!(bounds.width > 0.0 && bounds.x >= 72.0);
+            assert!(bounds.width > 0.0 && bounds.x >= 12.0);
             assert!(
                 bounds.x + bounds.width <= size.width - 10.0,
                 "{label} overflows at {size:?}: {bounds:?}"
@@ -338,7 +338,7 @@ fn render_reference_preview() {
         })
         .collect();
     let (state, boot) = loaded(apps);
-    let mut ui = Simulator::with_size(Settings::default(), (1200.0, 760.0), state.view());
+    let mut ui = Simulator::with_size(Settings::default(), (1000.0, 650.0), state.view());
     focus(&mut ui, boot);
     let preview = ui.snapshot(&Theme::Dark).unwrap();
     // Snapshot baselines are normally immutable; render to a fresh directory
@@ -649,4 +649,53 @@ fn evaluation_failure_restores_app_search_and_ignores_old_clipboard_feedback() {
     let _ = state.update(Message::Query(String::new()));
     assert!(state.calculation.is_none());
     assert_eq!(state.visible.len(), 2);
+}
+
+#[test]
+fn losing_window_focus_exits_even_with_a_menu_or_calculation_open() {
+    for mode in 0..3 {
+        let (mut state, _) = loaded(vec![app("one.desktop", "One")]);
+        match mode {
+            1 => {
+                let _ = state.update(Message::Context(0));
+            }
+            2 => {
+                let _ = state.update(Message::Query("2 + 2".into()));
+            }
+            _ => {}
+        }
+        let task = state.update(Message::Unfocused);
+        let mut actions = runtime::task::into_stream(task).unwrap();
+        assert!(matches!(
+            iced_test::futures::futures::executor::block_on(actions.next()),
+            Some(Action::Exit)
+        ));
+    }
+}
+
+#[test]
+fn compact_grid_fits_six_apps_per_row_with_two_line_label_space() {
+    let labels = [
+        "Audio Player",
+        "Bluetooth Manager",
+        "Color Profiles",
+        "Connections",
+        "Google Chrome",
+        "System Monitor",
+    ];
+    let (state, _) = loaded(
+        labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| app(&format!("fixture-{index}.desktop"), label))
+            .collect(),
+    );
+    let mut ui = Simulator::with_size(Settings::default(), (1000.0, 650.0), state.view());
+    let first = ui.find(labels[0]).unwrap().bounds();
+    for label in labels {
+        let bounds = ui.find(label).unwrap().bounds();
+        assert_eq!(bounds.y, first.y, "six apps should share a row");
+        assert!(bounds.width >= 120.0 && bounds.height >= 36.0);
+        assert!(bounds.x >= 12.0 && bounds.x + bounds.width <= 988.0);
+    }
 }
