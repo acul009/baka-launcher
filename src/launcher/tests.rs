@@ -55,6 +55,11 @@ fn render_state(state: &State) -> State {
         loading: state.loading,
         launching: state.launching,
         error: state.error.clone(),
+        pins: state.pins.clone(),
+        pins_ready: state.pins_ready,
+        saving_pins: state.saving_pins,
+        context: state.context,
+        cursor: state.cursor,
     }
 }
 
@@ -214,7 +219,10 @@ fn clicking_a_tile_launches_that_tile_instead_of_the_first_result() {
     let (state, _) = loaded(vec![app("one.desktop", "One"), app("two.desktop", "Two")]);
     let mut ui = Simulator::with_size(Settings::default(), (1200.0, 760.0), state.view());
     let _ = ui.click("Two").unwrap();
-    let messages: Vec<_> = ui.into_messages().collect();
+    let messages: Vec<_> = ui
+        .into_messages()
+        .filter(|message| !matches!(message, Message::Cursor(_)))
+        .collect();
     assert_eq!(messages.len(), 1);
     assert!(matches!(messages[0], Message::Launch(1)));
 }
@@ -347,4 +355,159 @@ fn render_reference_preview() {
         .unwrap();
     }
     fs::remove_dir_all(directory).unwrap();
+}
+
+fn right_click(ui: &mut Simulator<'_, Message>, label: &str) -> Vec<Message> {
+    let position = ui.find(label).unwrap().bounds().center();
+    ui.point_at(position);
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+        position,
+    })]);
+    let _ = ui.simulate([
+        iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
+            iced::mouse::Button::Right,
+        )),
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+            iced::mouse::Button::Right,
+        )),
+    ]);
+    ui.drain().collect()
+}
+
+#[test]
+fn right_click_menu_pins_and_unpins_and_persists_across_restart() {
+    let directory = std::env::temp_dir().join(format!(
+        "baka-context-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let path = directory.join("pins.conf");
+    let apps = vec![app("one.desktop", "One"), app("two.desktop", "Two")];
+    let (mut state, _) = loaded(apps.clone());
+    state.pins = crate::pins::Preferences::load(path.clone()).unwrap();
+    let rendered = render_state(&state);
+    let mut ui = Simulator::with_size(Settings::default(), (1200.0, 760.0), rendered.view());
+    let messages = right_click(&mut ui, "Two");
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::Context(1)))
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::Launch(_) | Message::Submit))
+    );
+    for message in messages {
+        let _ = state.update(message);
+    }
+    let menu_state = render_state(&state);
+    let mut ui = ui.rebuild(menu_state.view());
+    let _ = ui
+        .snapshot(&Theme::Dark)
+        .unwrap()
+        .matches_image(format!("target/pin-menu-{}.png", std::process::id()))
+        .unwrap();
+    let _ = ui.click("Pin to Pinned").unwrap();
+    let mut save = None;
+    for message in ui.into_messages() {
+        let task = state.update(message);
+        if state.saving_pins && save.is_none() {
+            save = Some(task);
+        }
+    }
+    assert!(state.saving_pins);
+    let result = task_output(save.unwrap());
+    assert!(matches!(result, Message::PreferencesSaved(Ok(_))));
+    let _ = state.update(result);
+    assert!(state.pins.is_pinned(&state.apps[1].entry));
+    assert_eq!(
+        state.visible,
+        [1, 0],
+        "empty-query Enter order follows custom pin"
+    );
+    let (mut restarted, _) = loaded(apps);
+    let _ = restarted.update(Message::PreferencesLoaded(Ok(
+        crate::pins::Preferences::load(path.clone()).unwrap(),
+    )));
+    assert_eq!(restarted.visible, [1, 0]);
+    let rendered = render_state(&restarted);
+    let mut ui = Simulator::with_size(Settings::default(), (1200.0, 760.0), rendered.view());
+    assert!(ui.find("Two").unwrap().bounds().y < ui.find("One").unwrap().bounds().y);
+    for message in right_click(&mut ui, "Two") {
+        let _ = restarted.update(message);
+    }
+    let menu_state = render_state(&restarted);
+    let mut ui = ui.rebuild(menu_state.view());
+    let _ = ui.click("Unpin from Pinned").unwrap();
+    let message = ui
+        .into_messages()
+        .find(|message| matches!(message, Message::TogglePin))
+        .unwrap();
+    let result = task_output(restarted.update(message));
+    let _ = restarted.update(result);
+    assert!(
+        !crate::pins::Preferences::load(path)
+            .unwrap()
+            .is_pinned(&restarted.apps[1].entry)
+    );
+    assert_eq!(restarted.visible, [0, 1]);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn menu_dismisses_without_launching_and_stays_inside_small_window() {
+    let (mut state, _) = loaded(vec![app("one.desktop", "One")]);
+    let _ = state.update(Message::Cursor(Point::new(419.0, 359.0)));
+    let _ = state.update(Message::Context(0));
+    let rendered = render_state(&state);
+    let mut ui = Simulator::with_size(Settings::default(), (420.0, 360.0), rendered.view());
+    let bounds = ui.find("Pin to Pinned").unwrap().bounds();
+    assert!(bounds.x >= 0.0 && bounds.y >= 0.0);
+    assert!(bounds.x + bounds.width <= 420.0 && bounds.y + bounds.height <= 360.0);
+    ui.point_at(Point::new(40.0, 40.0));
+    let _ = ui.simulate(iced_test::simulator::click());
+    for message in ui.into_messages() {
+        assert!(!matches!(message, Message::Launch(_)));
+        let _ = state.update(message);
+    }
+    assert!(state.context.is_none());
+    let _ = state.update(Message::Context(0));
+    let close = state.update(Message::Close);
+    assert!(state.context.is_none());
+    let mut actions = runtime::task::into_stream(close).unwrap();
+    assert!(!matches!(
+        iced_test::futures::futures::executor::block_on(actions.next()),
+        Some(Action::Exit)
+    ));
+}
+
+#[test]
+fn failed_pin_save_keeps_original_pins_and_shows_error_without_launching() {
+    let (mut state, _) = loaded(vec![app("one.desktop", "One")]);
+    // A default in-memory configuration has no writable path.
+    let _ = state.update(Message::Context(0));
+    let result = task_output(state.update(Message::TogglePin));
+    assert!(matches!(result, Message::PreferencesSaved(Err(_))));
+    let _ = state.update(result);
+    assert!(!state.pins.is_pinned(&state.apps[0].entry));
+    assert!(!state.saving_pins && !state.launching);
+    let mut ui = Simulator::with_size(Settings::default(), (420.0, 360.0), state.view());
+    let error = ui.find(state.error.as_ref().unwrap().as_str()).unwrap();
+    assert!(error.visible_bounds().is_some());
+}
+
+#[test]
+fn custom_pins_do_not_override_search_ranking_and_default_unpins_sort_alphabetically() {
+    let (mut state, _) = loaded(vec![
+        app("code.desktop", "Zulu Browser"),
+        app("alpha.desktop", "Alpha"),
+        app("exact.desktop", "Browser"),
+    ]);
+    state.pins.set("code.desktop".into(), false);
+    state.visible = state.order();
+    assert_eq!(state.visible, [1, 2, 0]);
+    state.pins.set("code.desktop".into(), true);
+    let _ = state.update(Message::Query("browser".into()));
+    assert_eq!(state.visible, [2, 0]);
 }

@@ -3,3 +3,4 @@
 pub mod catalog;
 pub mod launch;
 pub mod launcher;
+pub mod pins;
