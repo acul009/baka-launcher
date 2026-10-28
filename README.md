@@ -9,13 +9,15 @@ keeps the window open so you can search again.
 
 Queries are evaluated with fasteval first: `2 + 3 * 4` displays `14`. Press
 **Enter** or click the calculation result to copy its value to the clipboard.
-The window stays open and confirms the copy; clipboard failures show an error.
+Enter closes the launcher after the clipboard confirms a successful copy.
+Clicking keeps the window open and confirms the copy; clipboard failures show
+an error and keep the launcher open.
 If evaluation fails, the query uses the normal application search instead.
 Arithmetic uses floating-point numbers and supports parentheses, powers (`^`),
 remainder (`%`), and functions such as `sin` and `log`.
 
-**Right-click an application** and select **Pin to Pinned** or **Unpin from
-Pinned**. The change appears after saving and persists between launches. Click
+**Right-click an application** and select **Pin** or **Unpin**.
+The change appears after saving and persists between launches. Click
 outside the menu or press Escape to dismiss it; Escape again closes the launcher.
 This works in both the application grid and search results.
 

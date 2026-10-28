@@ -44,13 +44,18 @@ pub enum Message {
     /// Activate the first displayed result.
     Submit,
     /// Copy the displayed calculation result without launching an application.
-    CopyResult,
+    CopyResult {
+        /// Enter closes after copying; clicking keeps the result visible.
+        close_after: bool,
+    },
     /// The clipboard reports success or failure for the specified result.
     CopyFinished {
         /// Result whose clipboard request completed.
         result: String,
         /// Clipboard write outcome.
         status: Result<(), iced::clipboard::Error>,
+        /// Whether this successful copy should close the launcher.
+        close_after: bool,
     },
     /// Activate one displayed application.
     Launch(usize),
@@ -159,7 +164,7 @@ impl State {
             }
             Message::Submit => {
                 if self.calculation.is_some() {
-                    return self.update(Message::CopyResult);
+                    return self.update(Message::CopyResult { close_after: true });
                 }
                 if self.context.is_some() {
                     return self.update(Message::TogglePin);
@@ -169,7 +174,7 @@ impl State {
                 };
                 self.update(Message::Launch(index))
             }
-            Message::CopyResult => {
+            Message::CopyResult { close_after } => {
                 let Some(result) = self.calculation.clone() else {
                     return Task::none();
                 };
@@ -180,15 +185,25 @@ impl State {
                         Message::CopyFinished {
                             result: result.clone(),
                             status,
+                            close_after,
                         }
                     }),
                     operation::focus(SEARCH),
                 ])
             }
-            Message::CopyFinished { result, status } => {
+            Message::CopyFinished {
+                result,
+                status,
+                close_after,
+            } => {
                 if self.calculation.as_ref() == Some(&result) {
                     match status {
-                        Ok(()) => self.copied = true,
+                        Ok(()) => {
+                            self.copied = true;
+                            if close_after {
+                                return iced::exit();
+                            }
+                        }
                         Err(_) => {
                             self.error = Some("Could not copy result to the clipboard".into())
                         }
@@ -359,7 +374,7 @@ impl State {
                 ))
                 .width(20)
                 .height(20),
-                text_input("Search apps or calculate…", &self.query)
+                text_input("", &self.query)
                     .id(SEARCH)
                     .size(17)
                     .padding(0)
@@ -401,51 +416,47 @@ impl State {
             let mut body: iced::widget::Column<Element<'_, Message>> =
                 column![].spacing(14).width(Fill);
             if let Some(result) = &self.calculation {
-                body = body
-                    .push(text("CALCULATOR").size(12).color(MUTED).boxed())
-                    .push(
-                        button(
-                            column![
-                                text(result)
-                                    .size(32)
-                                    .wrapping(text::Wrapping::WordOrGlyph)
-                                    .color(color!(0xeeeeef)),
-                                text(if self.copied {
-                                    "Copied to clipboard"
-                                } else {
-                                    "Enter or click to copy"
-                                })
-                                .size(14)
-                                .color(MUTED),
-                            ]
-                            .spacing(8)
-                            .width(Fill),
-                        )
-                        .on_press(Message::CopyResult)
-                        .padding(18)
-                        .width(Fill)
-                        .style(|_, status| button::Style {
-                            background: Some(
-                                if status == button::Status::Hovered {
-                                    color!(0x29292d)
-                                } else {
-                                    color!(0x202023)
-                                }
-                                .into(),
-                            ),
-                            border: Border {
-                                color: color!(0x38383e),
-                                width: 1.0,
-                                radius: 9.into(),
-                            },
-                            ..Default::default()
-                        })
-                        .boxed(),
-                    );
+                body = body.push(
+                    button(
+                        column![
+                            text(result)
+                                .size(32)
+                                .wrapping(text::Wrapping::WordOrGlyph)
+                                .color(color!(0xeeeeef)),
+                            text(if self.copied {
+                                "Copied to clipboard"
+                            } else {
+                                "Enter or click to copy"
+                            })
+                            .size(14)
+                            .color(MUTED),
+                        ]
+                        .spacing(8)
+                        .width(Fill),
+                    )
+                    .on_press(Message::CopyResult { close_after: false })
+                    .padding(18)
+                    .width(Fill)
+                    .style(|_, status| button::Style {
+                        background: Some(
+                            if status == button::Status::Hovered {
+                                color!(0x29292d)
+                            } else {
+                                color!(0x202023)
+                            }
+                            .into(),
+                        ),
+                        border: Border {
+                            color: color!(0x38383e),
+                            width: 1.0,
+                            radius: 9.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .boxed(),
+                );
             } else if !self.query.trim().is_empty() {
-                body = body
-                    .push(text("APPLICATIONS").size(12).color(MUTED).boxed())
-                    .push(tiles(self.visible.clone()).boxed());
+                body = body.push(tiles(self.visible.clone()).boxed());
             } else {
                 let (pinned, remaining): (Vec<_>, Vec<_>) = self
                     .visible
@@ -467,9 +478,7 @@ impl State {
                                 .boxed(),
                         );
                 }
-                body = body
-                    .push(text("APPLICATIONS").size(12).color(MUTED).boxed())
-                    .push(tiles(remaining).boxed());
+                body = body.push(tiles(remaining).boxed());
             }
             if self.loading && self.calculation.is_none() {
                 body = body.push(text("Loading applications…").size(14).color(MUTED).boxed());
@@ -522,9 +531,9 @@ impl State {
                 return space().boxed();
             };
             let label = if self.pins.is_pinned(&self.apps[index].entry) {
-                "Unpin from Pinned"
+                "Unpin"
             } else {
-                "Pin to Pinned"
+                "Pin"
             };
             let item = button(text(label).size(15))
                 .width(Fill)

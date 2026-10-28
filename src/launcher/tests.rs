@@ -410,7 +410,7 @@ fn right_click_menu_pins_and_unpins_and_persists_across_restart() {
         .unwrap()
         .matches_image(format!("target/pin-menu-{}.png", std::process::id()))
         .unwrap();
-    let _ = ui.click("Pin to Pinned").unwrap();
+    let _ = ui.click("Pin").unwrap();
     let mut save = None;
     for message in ui.into_messages() {
         let task = state.update(message);
@@ -441,7 +441,7 @@ fn right_click_menu_pins_and_unpins_and_persists_across_restart() {
     }
     let menu_state = render_state(&restarted);
     let mut ui = ui.rebuild(menu_state.view());
-    let _ = ui.click("Unpin from Pinned").unwrap();
+    let _ = ui.click("Unpin").unwrap();
     let message = ui
         .into_messages()
         .find(|message| matches!(message, Message::TogglePin))
@@ -464,7 +464,7 @@ fn menu_dismisses_without_launching_and_stays_inside_small_window() {
     let _ = state.update(Message::Context(0));
     let rendered = render_state(&state);
     let mut ui = Simulator::with_size(Settings::default(), (420.0, 360.0), rendered.view());
-    let bounds = ui.find("Pin to Pinned").unwrap().bounds();
+    let bounds = ui.find("Pin").unwrap().bounds();
     assert!(bounds.x >= 0.0 && bounds.y >= 0.0);
     assert!(bounds.x + bounds.width <= 420.0 && bounds.y + bounds.height <= 360.0);
     ui.point_at(Point::new(40.0, 40.0));
@@ -565,7 +565,7 @@ fn typing_an_expression_shows_the_result_and_enter_copies_instead_of_launching()
     assert!(state.visible.is_empty());
     let updated = render_state(&state);
     let mut ui = ui.rebuild(updated.view());
-    assert!(ui.find("CALCULATOR").is_ok());
+    assert!(ui.find("CALCULATOR").is_err());
     assert!(ui.find("14").is_ok());
     let _ = ui
         .snapshot(&Theme::Dark)
@@ -586,7 +586,11 @@ fn typing_an_expression_shows_the_result_and_enter_copies_instead_of_launching()
         .unwrap();
     let task = state.update(message);
     let result = clipboard_result(task, "14", Ok(()));
-    assert!(runtime::task::into_stream(state.update(result)).is_none());
+    let mut actions = runtime::task::into_stream(state.update(result)).unwrap();
+    assert!(matches!(
+        iced_test::futures::futures::executor::block_on(actions.next()),
+        Some(Action::Exit)
+    ));
     assert!(state.copied && !state.launching);
     let mut ui = Simulator::with_size(Settings::default(), (1200.0, 760.0), state.view());
     assert!(ui.find("Copied to clipboard").is_ok());
@@ -603,7 +607,7 @@ fn clicking_the_result_copies_its_text_and_reports_clipboard_errors() {
     let _ = ui.click("3").unwrap();
     let message = ui
         .into_messages()
-        .find(|message| matches!(message, Message::CopyResult))
+        .find(|message| matches!(message, Message::CopyResult { close_after: false }))
         .unwrap();
     let task = state.update(message);
     let result = clipboard_result(task, "3", Err(iced::clipboard::Error::ClipboardUnavailable));
@@ -615,12 +619,23 @@ fn clicking_the_result_copies_its_text_and_reports_clipboard_errors() {
     let _ = ui.click("3").unwrap();
     let message = ui
         .into_messages()
-        .find(|message| matches!(message, Message::CopyResult))
+        .find(|message| matches!(message, Message::CopyResult { close_after: false }))
         .unwrap();
     let task = state.update(message);
     let result = clipboard_result(task, "3", Ok(()));
-    let _ = state.update(result);
+    assert!(runtime::task::into_stream(state.update(result)).is_none());
     assert!(state.copied && state.error.is_none());
+}
+
+#[test]
+fn enter_keeps_the_launcher_open_when_clipboard_write_fails() {
+    let (mut state, _) = loaded(Vec::new());
+    let _ = state.update(Message::Query("2+2".into()));
+    let task = state.update(Message::Submit);
+    let result = clipboard_result(task, "4", Err(iced::clipboard::Error::ClipboardUnavailable));
+    assert!(runtime::task::into_stream(state.update(result)).is_none());
+    assert!(!state.copied);
+    assert!(state.error.is_some());
 }
 
 #[test]
@@ -643,9 +658,13 @@ fn evaluation_failure_restores_app_search_and_ignores_old_clipboard_feedback() {
     let _ = state.update(Message::CopyFinished {
         result: "4".into(),
         status: Ok(()),
+        close_after: true,
     });
     assert!(!state.copied);
-    assert!(runtime::task::into_stream(state.update(Message::CopyResult)).is_none());
+    assert!(
+        runtime::task::into_stream(state.update(Message::CopyResult { close_after: true }))
+            .is_none()
+    );
     let _ = state.update(Message::Query(String::new()));
     assert!(state.calculation.is_none());
     assert_eq!(state.visible.len(), 2);
